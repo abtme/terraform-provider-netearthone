@@ -37,6 +37,7 @@ func NewClient(baseURL string, authUserID int, apiKey string) *Client {
 type actionResponse struct {
 	Status           string `json:"status"`
 	Error            string `json:"error"`
+	Message          string `json:"message"`
 	Description      string `json:"description"`
 	EntityID         interface{} `json:"entityid"`
 	ActionType       string `json:"actiontype"`
@@ -171,20 +172,18 @@ func (c *ContactDetails) ContactIDInt() (int, error) {
 
 // DomainSearchResult holds a single domain from the search endpoint.
 type DomainSearchResult struct {
-	OrderID       interface{} `json:"orderid"`
-	DomainName    string      `json:"domainname"`
-	CurrentStatus string      `json:"currentstatus"`
-	ProductKey    string      `json:"productkey"`
-	ExpiryDate    string      `json:"endtime"`
-	CreationDate  string      `json:"creationtime"`
-	CustomerID    interface{} `json:"customerid"`
+	OrderID       string
+	DomainName    string
+	CurrentStatus string
+	ProductKey    string
+	ExpiryDate    string
+	CreationDate  string
+	CustomerID    string
 }
 
-// DomainSearchResponse is the top-level response from search.json.
-type DomainSearchResponse struct {
-	RecordsCount int                  `json:"recsindb"`
-	Results      []DomainSearchResult `json:"result"`
-}
+// domainSearchEntry is the raw per-domain object returned by the search API.
+// Field names use dot-notation (e.g. "entity.description").
+type domainSearchEntry map[string]string
 
 // DomainSearchParams holds optional filters for domain search.
 type DomainSearchParams struct {
@@ -193,6 +192,7 @@ type DomainSearchParams struct {
 	Status      []string
 	ProductKey  []string
 	DomainName  string
+	CustomerID  int
 }
 
 // ---------------------------------------------------------------------------
@@ -244,14 +244,22 @@ func (c *Client) getAndDecode(reqURL string, target interface{}) error {
 	}
 
 	var errCheck struct {
-		Status string `json:"status"`
-		Error  string `json:"error"`
+		Status  string `json:"status"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &errCheck); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
 	if errCheck.Status == "ERROR" {
-		return fmt.Errorf("API error: %s", errCheck.Error)
+		msg := errCheck.Error
+		if msg == "" {
+			msg = errCheck.Message
+		}
+		if msg == "" {
+			msg = string(body)
+		}
+		return fmt.Errorf("API error: %s", msg)
 	}
 
 	return json.Unmarshal(body, target)
@@ -274,7 +282,11 @@ func (c *Client) postFormAndCheck(endpoint string, params url.Values) error {
 		return fmt.Errorf("parsing response: %w", err)
 	}
 	if result.Status == "ERROR" {
-		return fmt.Errorf("API error: %s", result.Error)
+		msg := result.Error
+		if msg == "" {
+			msg = string(body)
+		}
+		return fmt.Errorf("API error: %s", msg)
 	}
 	return nil
 }
@@ -303,7 +315,11 @@ func (c *Client) ModifyNameservers(orderID int, nameservers []string) error {
 	for _, ns := range nameservers {
 		params.Add("ns", ns)
 	}
-	return c.postFormAndCheck("/api/domains/modify-ns.json", params)
+	err := c.postFormAndCheck("/api/domains/modify-ns.json", params)
+	if err != nil && strings.Contains(err.Error(), "Same value for new and old NameServers") {
+		return nil
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +332,7 @@ func (c *Client) GetDomainByName(domainName string) (*DomainDetails, error) {
 	params.Set("domain-name", domainName)
 	params.Add("options", "OrderDetails")
 	params.Add("options", "NsDetails")
+	params.Add("options", "ContactIds")
 
 	var details DomainDetails
 	if err := c.getAndDecode(fmt.Sprintf("%s/api/domains/details-by-name.json?%s", c.BaseURL, params.Encode()), &details); err != nil {
@@ -595,8 +612,8 @@ func (c *Client) SearchContacts(customerID, noOfRecords, pageNo int, name, email
 // SearchDomains returns domain orders matching the given parameters.
 func (c *Client) SearchDomains(p DomainSearchParams) ([]DomainSearchResult, int, error) {
 	params := c.authParams()
-	if p.NoOfRecords <= 0 {
-		p.NoOfRecords = 50
+	if p.NoOfRecords < 10 {
+		p.NoOfRecords = 10
 	}
 	if p.PageNo <= 0 {
 		p.PageNo = 1
@@ -612,7 +629,12 @@ func (c *Client) SearchDomains(p DomainSearchParams) ([]DomainSearchResult, int,
 	if p.DomainName != "" {
 		params.Set("domain-name", p.DomainName)
 	}
+	if p.CustomerID > 0 {
+		params.Set("customer-id", strconv.Itoa(p.CustomerID))
+	}
 
+	// The API returns a flat object with numeric string keys ("1", "2", ...) for
+	// each domain entry, plus "recsindb" and "recsonpage" as metadata keys.
 	var raw map[string]json.RawMessage
 	if err := c.getAndDecode(fmt.Sprintf("%s/api/domains/search.json?%s", c.BaseURL, params.Encode()), &raw); err != nil {
 		return nil, 0, err
@@ -620,12 +642,32 @@ func (c *Client) SearchDomains(p DomainSearchParams) ([]DomainSearchResult, int,
 
 	total := 0
 	if v, ok := raw["recsindb"]; ok {
-		_ = json.Unmarshal(v, &total)
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			total, _ = strconv.Atoi(s)
+		} else {
+			_ = json.Unmarshal(v, &total)
+		}
 	}
 
 	var results []DomainSearchResult
-	if v, ok := raw["result"]; ok {
-		_ = json.Unmarshal(v, &results)
+	for key, val := range raw {
+		if key == "recsindb" || key == "recsonpage" {
+			continue
+		}
+		var entry domainSearchEntry
+		if err := json.Unmarshal(val, &entry); err != nil {
+			continue
+		}
+		results = append(results, DomainSearchResult{
+			OrderID:       entry["orders.orderid"],
+			DomainName:    entry["entity.description"],
+			CurrentStatus: entry["entity.currentstatus"],
+			ProductKey:    entry["entitytype.entitytypekey"],
+			ExpiryDate:    entry["orders.endtime"],
+			CreationDate:  entry["orders.creationtime"],
+			CustomerID:    entry["entity.customerid"],
+		})
 	}
 	return results, total, nil
 }
