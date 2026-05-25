@@ -14,7 +14,7 @@ import (
 	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
 )
 
-const defaultBaseURL = "https://api.netearthone.com"
+const defaultBaseURL = "https://httpapi.netearthone.com"
 
 var _ provider.Provider = &NetearthOneProvider{}
 
@@ -45,7 +45,7 @@ func (p *NetearthOneProvider) Schema(_ context.Context, _ provider.SchemaRequest
 		Attributes: map[string]schema.Attribute{
 			"base_url": schema.StringAttribute{
 				Optional:    true,
-				Description: "NetearthOne API base URL. Defaults to https://api.netearthone.com. Can also be set via NETEARTHONE_BASE_URL environment variable.",
+				Description: "NetearthOne API base URL. Defaults to https://httpapi.netearthone.com. Can also be set via NETEARTHONE_BASE_URL environment variable.",
 			},
 			"auth_userid": schema.Int64Attribute{
 				Optional:    true,
