@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 const defaultBaseURL = "https://httpapi.com"

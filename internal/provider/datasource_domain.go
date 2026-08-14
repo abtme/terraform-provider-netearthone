@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 var _ datasource.DataSource = &DomainDataSource{}
@@ -18,9 +18,13 @@ type DomainDataSource struct {
 }
 
 type DomainDataSourceModel struct {
-	DomainName  types.String `tfsdk:"domain_name"`
-	OrderID     types.Int64  `tfsdk:"order_id"`
-	Nameservers types.List   `tfsdk:"nameservers"`
+	DomainName          types.String `tfsdk:"domain_name"`
+	OrderID             types.Int64  `tfsdk:"order_id"`
+	Nameservers         types.List   `tfsdk:"nameservers"`
+	RegistrantContactID types.Int64  `tfsdk:"registrant_contact_id"`
+	AdminContactID      types.Int64  `tfsdk:"admin_contact_id"`
+	TechContactID       types.Int64  `tfsdk:"tech_contact_id"`
+	BillingContactID    types.Int64  `tfsdk:"billing_contact_id"`
 }
 
 func NewDomainDataSource() datasource.DataSource {
@@ -48,6 +52,22 @@ func (d *DomainDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "The current nameservers assigned to the domain.",
+			},
+			"registrant_contact_id": schema.Int64Attribute{
+				Computed:    true,
+				Description: "Contact ID of the domain registrant (owner).",
+			},
+			"admin_contact_id": schema.Int64Attribute{
+				Computed:    true,
+				Description: "Contact ID of the administrative contact.",
+			},
+			"tech_contact_id": schema.Int64Attribute{
+				Computed:    true,
+				Description: "Contact ID of the technical contact.",
+			},
+			"billing_contact_id": schema.Int64Attribute{
+				Computed:    true,
+				Description: "Contact ID of the billing contact.",
 			},
 		},
 	}
@@ -93,5 +113,17 @@ func (d *DomainDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 
 	config.OrderID = types.Int64Value(int64(orderID))
 	config.Nameservers = nsList
+
+	// Fetch contact IDs in a second call with ContactIds option.
+	reg, admin, tech, billing, err := d.client.GetDomainContactIDs(orderID)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read domain contact IDs", err.Error())
+		return
+	}
+	config.RegistrantContactID = types.Int64Value(int64(reg))
+	config.AdminContactID = types.Int64Value(int64(admin))
+	config.TechContactID = types.Int64Value(int64(tech))
+	config.BillingContactID = types.Int64Value(int64(billing))
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 }

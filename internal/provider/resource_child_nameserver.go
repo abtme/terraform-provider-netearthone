@@ -3,18 +3,21 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 var _ resource.Resource = &ChildNameserverResource{}
+var _ resource.ResourceWithImportState = &ChildNameserverResource{}
 
 type ChildNameserverResource struct {
 	client *client.Client
@@ -44,6 +47,9 @@ func (r *ChildNameserverResource) Schema(_ context.Context, _ resource.SchemaReq
 			"id": schema.StringAttribute{
 				Computed:    true,
 				Description: "Composite identifier: \"<order_id>/<hostname>\".",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"order_id": schema.Int64Attribute{
 				Required:    true,
@@ -197,6 +203,48 @@ func (r *ChildNameserverResource) Delete(ctx context.Context, req resource.Delet
 	if err := r.client.DeleteChildNameserver(int(state.OrderID.ValueInt64()), state.Hostname.ValueString()); err != nil {
 		resp.Diagnostics.AddError("Failed to delete child nameserver", err.Error())
 	}
+}
+
+func (r *ChildNameserverResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import by "orderID/hostname" (e.g. terraform import netearthone_child_nameserver.ns1 124814418/ns1.example.com)
+	parts := strings.SplitN(req.ID, "/", 2)
+	if len(parts) != 2 {
+		resp.Diagnostics.AddError("Invalid import ID", "Expected \"<order_id>/<hostname>\", got: "+req.ID)
+		return
+	}
+
+	orderID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "order_id must be numeric, got: "+parts[0])
+		return
+	}
+	hostname := parts[1]
+
+	cnsMap, err := r.client.GetChildNameservers(int(orderID))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read child nameservers during import", err.Error())
+		return
+	}
+
+	ips, exists := cnsMap[hostname]
+	if !exists {
+		resp.Diagnostics.AddError("Child nameserver not found", fmt.Sprintf("No child nameserver %q found for order %d", hostname, orderID))
+		return
+	}
+
+	ipList, diags := types.ListValueFrom(ctx, types.StringType, ips)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	state := ChildNameserverModel{
+		ID:      types.StringValue(req.ID),
+		OrderID: types.Int64Value(orderID),
+		Hostname: types.StringValue(hostname),
+		IPs:     ipList,
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func toSet(ss []string) map[string]bool {

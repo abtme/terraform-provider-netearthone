@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 var _ datasource.DataSource = &DomainsDataSource{}
@@ -24,18 +24,20 @@ type DomainsDataSourceModel struct {
 	ProductKey   types.List   `tfsdk:"product_key"`
 	NoOfRecords  types.Int64  `tfsdk:"no_of_records"`
 	PageNo       types.Int64  `tfsdk:"page_no"`
+	CustomerID   types.Int64  `tfsdk:"customer_id"`
 	TotalRecords types.Int64  `tfsdk:"total_records"`
 	Domains      types.List   `tfsdk:"domains"`
 }
 
 var domainObjectType = types.ObjectType{
 	AttrTypes: map[string]attr.Type{
-		"order_id":       types.StringType,
-		"domain_name":    types.StringType,
-		"status":         types.StringType,
-		"product_key":    types.StringType,
-		"expiry_date":    types.StringType,
-		"creation_date":  types.StringType,
+		"order_id":      types.StringType,
+		"domain_name":   types.StringType,
+		"status":        types.StringType,
+		"product_key":   types.StringType,
+		"expiry_date":   types.StringType,
+		"creation_date": types.StringType,
+		"customer_id":   types.StringType,
 	},
 }
 
@@ -73,6 +75,10 @@ func (d *DomainsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 				Optional:    true,
 				Description: "Page number for pagination (default 1).",
 			},
+			"customer_id": schema.Int64Attribute{
+				Optional:    true,
+				Description: "Filter by customer ID. Only returns domains belonging to this customer.",
+			},
 			"total_records": schema.Int64Attribute{
 				Computed:    true,
 				Description: "Total number of matching records in the API.",
@@ -106,6 +112,10 @@ func (d *DomainsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 							Computed:    true,
 							Description: "Domain creation timestamp.",
 						},
+						"customer_id": schema.StringAttribute{
+							Computed:    true,
+							Description: "Customer ID that owns this domain.",
+						},
 					},
 				},
 			},
@@ -137,6 +147,7 @@ func (d *DomainsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		NoOfRecords: int(config.NoOfRecords.ValueInt64()),
 		PageNo:      int(config.PageNo.ValueInt64()),
 		DomainName:  config.DomainName.ValueString(),
+		CustomerID:  int(config.CustomerID.ValueInt64()),
 	}
 
 	if !config.Status.IsNull() && !config.Status.IsUnknown() {
@@ -169,14 +180,14 @@ func (d *DomainsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 
 	domainElems := make([]attr.Value, len(results))
 	for i, r := range results {
-		orderIDStr := fmt.Sprintf("%v", r.OrderID)
 		obj, diags := types.ObjectValue(domainObjectType.AttrTypes, map[string]attr.Value{
-			"order_id":      types.StringValue(orderIDStr),
+			"order_id":      types.StringValue(r.OrderID),
 			"domain_name":   types.StringValue(r.DomainName),
 			"status":        types.StringValue(r.CurrentStatus),
 			"product_key":   types.StringValue(r.ProductKey),
 			"expiry_date":   types.StringValue(r.ExpiryDate),
 			"creation_date": types.StringValue(r.CreationDate),
+			"customer_id":   types.StringValue(r.CustomerID),
 		})
 		resp.Diagnostics.Append(diags...)
 		domainElems[i] = obj

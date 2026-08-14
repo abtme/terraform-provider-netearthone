@@ -9,12 +9,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 var _ resource.Resource = &DomainContactsResource{}
+var _ resource.ResourceWithImportState = &DomainContactsResource{}
 
 type DomainContactsResource struct {
 	client *client.Client
@@ -45,6 +47,9 @@ func (r *DomainContactsResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"id": schema.StringAttribute{
 				Computed:    true,
 				Description: "The order ID as a string (resource identifier).",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"order_id": schema.Int64Attribute{
 				Required:    true,
@@ -135,8 +140,9 @@ func (r *DomainContactsResource) Read(ctx context.Context, req resource.ReadRequ
 }
 
 func (r *DomainContactsResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan DomainContactsModel
+	var plan, state DomainContactsModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -146,8 +152,33 @@ func (r *DomainContactsResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	plan.ID = types.StringValue(strconv.FormatInt(plan.OrderID.ValueInt64(), 10))
+	plan.ID = state.ID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func (r *DomainContactsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import by order ID (e.g. terraform import netearthone_domain_contacts.this 124814418)
+	orderID, err := strconv.ParseInt(req.ID, 10, 64)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "Expected a numeric order ID, got: "+req.ID)
+		return
+	}
+
+	reg, admin, tech, billing, err := r.client.GetDomainContactIDs(int(orderID))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read domain contacts during import", err.Error())
+		return
+	}
+
+	state := DomainContactsModel{
+		ID:               types.StringValue(req.ID),
+		OrderID:          types.Int64Value(orderID),
+		RegContactID:     types.Int64Value(int64(reg)),
+		AdminContactID:   types.Int64Value(int64(admin)),
+		TechContactID:    types.Int64Value(int64(tech)),
+		BillingContactID: types.Int64Value(int64(billing)),
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *DomainContactsResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {

@@ -9,12 +9,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 var _ resource.Resource = &DomainPrivacyResource{}
+var _ resource.ResourceWithImportState = &DomainPrivacyResource{}
 
 type DomainPrivacyResource struct {
 	client *client.Client
@@ -42,6 +44,9 @@ func (r *DomainPrivacyResource) Schema(_ context.Context, _ resource.SchemaReque
 			"id": schema.StringAttribute{
 				Computed:    true,
 				Description: "The order ID as a string (resource identifier).",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"order_id": schema.Int64Attribute{
 				Required:    true,
@@ -130,6 +135,29 @@ func (r *DomainPrivacyResource) Update(ctx context.Context, req resource.UpdateR
 
 	plan.ID = types.StringValue(strconv.FormatInt(plan.OrderID.ValueInt64(), 10))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func (r *DomainPrivacyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import by order ID (e.g. terraform import netearthone_domain_privacy.this 124814418)
+	orderID, err := strconv.ParseInt(req.ID, 10, 64)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "Expected a numeric order ID, got: "+req.ID)
+		return
+	}
+
+	details, err := r.client.GetDomainDetails(int(orderID), []string{"DomainStatus"})
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read domain privacy status during import", err.Error())
+		return
+	}
+
+	state := DomainPrivacyModel{
+		ID:               types.StringValue(req.ID),
+		OrderID:          types.Int64Value(orderID),
+		PrivacyProtected: types.BoolValue(details.PrivacyEnabled()),
+		Reason:           types.StringValue("imported"),
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *DomainPrivacyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

@@ -1,4 +1,4 @@
-module gitlab.turnbull.uk/awxgit/terraform-provider-netearthone
+module github.com/abtme/terraform-provider-netearthone
 
 go 1.22.2
 

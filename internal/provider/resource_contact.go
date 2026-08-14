@@ -7,13 +7,17 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 var _ resource.Resource = &ContactResource{}
+var _ resource.ResourceWithImportState = &ContactResource{}
 
 type ContactResource struct {
 	client *client.Client
@@ -55,10 +59,17 @@ func (r *ContactResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"id": schema.StringAttribute{
 				Computed:    true,
 				Description: "The contact ID assigned by NetearthOne.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"customer_id": schema.Int64Attribute{
-				Required:    true,
-				Description: "The customer ID under which this contact is created.",
+				Optional:    true,
+				Computed:    true,
+				Description: "The customer ID under which this contact is created. Required when creating a new contact. Not returned by the API on read, so imported contacts will show 0 unless set explicitly.",
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 			"type": schema.StringAttribute{
 				Optional:    true,
@@ -227,13 +238,15 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 }
 
 func (r *ContactResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan ContactModel
+	var plan, state ContactModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	contactID, err := strconv.Atoi(plan.ID.ValueString())
+	// ID is always taken from state — it is never changing during an update.
+	contactID, err := strconv.Atoi(state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid contact ID in state", err.Error())
 		return
@@ -244,7 +257,30 @@ func (r *ContactResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
+	plan.ID = state.ID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import by contact ID (e.g. terraform import netearthone_contact.registrant 67890)
+	contactID, err := strconv.Atoi(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "Expected a numeric contact ID, got: "+req.ID)
+		return
+	}
+
+	details, err := r.client.GetContact(contactID)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read contact during import", err.Error())
+		return
+	}
+
+	var state ContactModel
+	state.ID = types.StringValue(req.ID)
+	// customer_id is not returned by details endpoint — default to 0 and let the user correct it
+	state.CustomerID = types.Int64Value(0)
+	contactDetailsToModel(details, &state)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *ContactResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

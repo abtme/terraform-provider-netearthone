@@ -7,7 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/provider"
+	"github.com/abtme/terraform-provider-netearthone/internal/provider"
 )
 
 var version = "dev"
@@ -18,7 +18,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/awxgit/netearthone",
+		Address: "registry.terraform.io/abtme/netearthone",
 		Debug:   debug,
 	}
 

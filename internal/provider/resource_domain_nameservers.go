@@ -10,12 +10,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"gitlab.turnbull.uk/awxgit/terraform-provider-netearthone/internal/client"
+	"github.com/abtme/terraform-provider-netearthone/internal/client"
 )
 
 var _ resource.Resource = &DomainNameserversResource{}
+var _ resource.ResourceWithImportState = &DomainNameserversResource{}
 
 type DomainNameserversResource struct {
 	client *client.Client
@@ -43,6 +45,9 @@ func (r *DomainNameserversResource) Schema(_ context.Context, _ resource.SchemaR
 			"id": schema.StringAttribute{
 				Computed:    true,
 				Description: "The order ID as a string (used as the resource identifier).",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"order_id": schema.Int64Attribute{
 				Required:    true,
@@ -143,6 +148,34 @@ func (r *DomainNameserversResource) Update(ctx context.Context, req resource.Upd
 func (r *DomainNameserversResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	// Nameservers cannot be "deleted" — removing this resource from Terraform
 	// state simply stops managing them. No API call is made.
+}
+
+func (r *DomainNameserversResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import by order ID (e.g. terraform import netearthone_domain_nameservers.this 124814418)
+	orderID, err := strconv.ParseInt(req.ID, 10, 64)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "Expected a numeric order ID, got: "+req.ID)
+		return
+	}
+
+	ns, err := r.client.GetDomainNameservers(int(orderID))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read nameservers during import", err.Error())
+		return
+	}
+
+	nsList, diags := types.ListValueFrom(ctx, types.StringType, ns)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	state := DomainNameserversModel{
+		ID:          types.StringValue(req.ID),
+		OrderID:     types.Int64Value(orderID),
+		Nameservers: nsList,
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func toStringSlice(ctx context.Context, list types.List) ([]string, diag.Diagnostics) {
