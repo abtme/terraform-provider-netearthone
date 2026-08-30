@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -231,16 +232,41 @@ func (c *Client) authParams() url.Values {
 	return params
 }
 
+// debugHTTP reports whether NETEARTHONE_DEBUG_HTTP is set, enabling verbose
+// request/response logging to stderr. The API key is always redacted.
+func debugHTTP() bool {
+	return os.Getenv("NETEARTHONE_DEBUG_HTTP") != ""
+}
+
+func (c *Client) redact(s string) string {
+	if c.APIKey == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, c.APIKey, "[redacted]")
+}
+
 func (c *Client) getAndDecode(reqURL string, target interface{}) error {
+	if debugHTTP() {
+		fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: GET %s\n", c.redact(reqURL))
+	}
 	resp, err := c.HTTPClient.Get(reqURL)
 	if err != nil {
+		if debugHTTP() {
+			fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: request failed: %v\n", err)
+		}
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if debugHTTP() {
+		fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: response status=%s\n", resp.Status)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading response: %w", err)
+	}
+	if debugHTTP() {
+		fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: response body=%q\n", c.redact(string(body)))
 	}
 
 	var errCheck struct {
@@ -266,15 +292,27 @@ func (c *Client) getAndDecode(reqURL string, target interface{}) error {
 }
 
 func (c *Client) postFormAndCheck(endpoint string, params url.Values) error {
+	if debugHTTP() {
+		fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: POST %s params=%q\n", endpoint, c.redact(params.Encode()))
+	}
 	resp, err := c.HTTPClient.PostForm(c.BaseURL+endpoint, params)
 	if err != nil {
+		if debugHTTP() {
+			fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: request failed: %v\n", err)
+		}
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if debugHTTP() {
+		fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: response status=%s\n", resp.Status)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading response: %w", err)
+	}
+	if debugHTTP() {
+		fmt.Fprintf(os.Stderr, "NETEARTHONE_DEBUG_HTTP: response body=%q\n", c.redact(string(body)))
 	}
 
 	var result actionResponse
